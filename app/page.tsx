@@ -1,35 +1,33 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  CartesianGrid,
-  Legend,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+import { PracticeTab } from "../components/PracticeTab";
+import { ProfileTab } from "../components/ProfileTab";
 
 import { wordBank } from "../data/wordBank";
+import {
+  ACTIVE_TAB_STORAGE_KEY,
+  RECENT_WORD_LIMIT,
+  ROUND_HISTORY_STORAGE_KEY,
+  ROUND_WORD_COUNT,
+} from "../lib/sessionConfig";
 import { getWeakPatterns, selectNextWords } from "../lib/promptSelection";
 import { analyzeTypingAttempt } from "../lib/typingMetrics";
-
-const ROUND_WORD_COUNT = 10;
-const RECENT_WORD_LIMIT = 30;
-const ACTIVE_TAB_STORAGE_KEY = "typingTutor.activeTab";
-const ROUND_HISTORY_STORAGE_KEY = "typingTutor.roundHistory";
+import type { ActiveTab, RoundHistoryEntry } from "../types/typing";
 
 const INITIAL_ROUND_WORDS = wordBank.slice(0, ROUND_WORD_COUNT).map((entry) => entry.word);
 
-type RoundHistoryEntry = {
-  round: number;
-  accuracy: number;
-  wpm: number;
-  averageAccuracy: number;
-  averageWpm: number;
-};
+function getRandomStarterWords(count: number): string[] {
+  return selectNextWords(
+    {
+      wordBank,
+      weakPatterns: [],
+      recentWords: [],
+      fallbackWords: INITIAL_ROUND_WORDS,
+    },
+    count,
+  ).map((entry) => entry.word);
+}
 
 function mergeCountMaps(
   previousCounts: Record<string, number>,
@@ -46,7 +44,8 @@ function mergeCountMaps(
 
 export default function Home() {
   const startTimeRef = useRef(Date.now());
-  const [activeTab, setActiveTab] = useState<"practice" | "profile">("practice");
+  const hasInitializedStarterWordsRef = useRef(false);
+  const [activeTab, setActiveTab] = useState<ActiveTab>("practice");
   const [currentRoundWords, setCurrentRoundWords] = useState<string[]>(() => {
     if (INITIAL_ROUND_WORDS.length > 0) {
       return INITIAL_ROUND_WORDS;
@@ -65,7 +64,21 @@ export default function Home() {
   const [roundHistory, setRoundHistory] = useState<RoundHistoryEntry[]>(() => {
     if (typeof window === "undefined") return [];
     const stored = window.localStorage.getItem(ROUND_HISTORY_STORAGE_KEY);
-    return stored ? JSON.parse(stored) : [];
+
+    if (!stored) {
+      return [];
+    }
+
+    try {
+      const parsed = JSON.parse(stored);
+      if (!Array.isArray(parsed)) {
+        return [];
+      }
+
+      return parsed as RoundHistoryEntry[];
+    } catch {
+      return [];
+    }
   });
 
   const targetText = useMemo(() => {
@@ -122,43 +135,8 @@ export default function Home() {
     startTimeRef.current = Date.now();
   };
 
-  const characterStates = useMemo(() => {
-    return Array.from(targetText).map((character, index) => {
-      const typedCharacter = typedText[index];
-
-      if (typeof typedCharacter === "undefined") {
-        return "pending" as const;
-      }
-
-      return typedCharacter === character ? ("correct" as const) : ("mistyped" as const);
-    });
-  }, [targetText, typedText]);
-
-  const promptSegments = useMemo(() => {
-    const words = targetText.split(" ");
-    let startIndex = 0;
-
-    return words.map((word, wordIndex) => {
-      const hasTrailingSpace = wordIndex < words.length - 1;
-      const segmentText = hasTrailingSpace ? `${word} ` : word;
-      const segment = { text: segmentText, startIndex };
-
-      startIndex += segmentText.length;
-      return segment;
-    });
-  }, [targetText]);
-
-  const sortedErrorsByLetter = useMemo(() => {
-    return Object.entries(sessionLetterErrors).sort((firstEntry, secondEntry) => secondEntry[1] - firstEntry[1]);
-  }, [sessionLetterErrors]);
-
-  const sortedErrorsByPattern = useMemo(() => {
-    return Object.entries(sessionPatternErrors).sort((firstEntry, secondEntry) => secondEntry[1] - firstEntry[1]);
-  }, [sessionPatternErrors]);
-
   const averageAccuracy = roundCount > 0 ? totalAccuracy / roundCount : null;
   const averageWpm = roundCount > 0 ? totalWpm / roundCount : null;
-  const recentRoundHistory = roundHistory.slice(-10);
 
   useEffect(() => {
     const storedTab = window.localStorage.getItem(ACTIVE_TAB_STORAGE_KEY);
@@ -169,12 +147,37 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    if (hasInitializedStarterWordsRef.current) {
+      return;
+    }
+
+    hasInitializedStarterWordsRef.current = true;
+
+    const randomStarterWords = getRandomStarterWords(ROUND_WORD_COUNT);
+    if (randomStarterWords.length === 0) {
+      return;
+    }
+
+    setCurrentRoundWords(randomStarterWords);
+    setTypedText("");
+    startTimeRef.current = Date.now();
+  }, []);
+
+  useEffect(() => {
     window.localStorage.setItem(ACTIVE_TAB_STORAGE_KEY, activeTab);
   }, [activeTab]);
 
   useEffect(() => {
     window.localStorage.setItem(ROUND_HISTORY_STORAGE_KEY, JSON.stringify(roundHistory));
   }, [roundHistory]);
+
+  const handleTypedTextChange = (nextTypedText: string) => {
+    setTypedText(nextTypedText);
+
+    if (nextTypedText.length === targetText.length) {
+      finishRound(nextTypedText);
+    }
+  };
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,_#f8f8f8_0%,_#ececec_55%,_#e5e5e5_100%)] px-6 text-center">
@@ -221,268 +224,24 @@ export default function Home() {
           </div>
 
           {activeTab === "practice" ? (
-            <div className="w-full rounded-[1.5rem] border border-zinc-200 bg-zinc-50 px-6 py-10 sm:px-10 sm:py-12">
-              <p
-                aria-label="Typing prompt"
-                className="flex flex-wrap justify-center gap-y-2 text-4xl font-medium leading-relaxed text-zinc-400 sm:text-5xl"
-              >
-                {promptSegments.map((segment) => (
-                  <span key={`${segment.startIndex}-${segment.text}`} className="whitespace-nowrap">
-                    {Array.from(segment.text).map((character, offset) => {
-                      const index = segment.startIndex + offset;
-                      const state = characterStates[index];
-
-                      const colorClass =
-                        state === "correct"
-                          ? "text-zinc-950"
-                          : state === "mistyped"
-                            ? "text-red-500"
-                            : "text-zinc-400";
-
-                      const underlineClass =
-                        index === typedText.length
-                          ? "underline decoration-2 underline-offset-[0.18em]"
-                          : "";
-
-                      return (
-                        <span key={`${character}-${index}`} className={`${colorClass} ${underlineClass}`}>
-                          {character === " " ? "\u00a0" : character}
-                        </span>
-                      );
-                    })}
-                  </span>
-                ))}
-              </p>
-
-              <label className="sr-only" htmlFor="typing-input">
-                Type the prompt text
-              </label>
-              <input
-                id="typing-input"
-                type="text"
-                autoComplete="off"
-                autoCapitalize="none"
-                autoCorrect="off"
-                spellCheck={false}
-                value={typedText}
-                onChange={(event) => {
-                  const nextTypedText = event.target.value.slice(0, targetText.length);
-                  setTypedText(nextTypedText);
-
-                  if (nextTypedText.length === targetText.length) {
-                    finishRound(nextTypedText);
-                  }
-                }}
-                className="mt-8 w-full rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-lg text-zinc-900 outline-none transition focus:border-zinc-400"
-                placeholder="Type all 10 words; next round appears automatically"
-              />
-
-              <div className="mt-8 grid gap-4 text-left sm:grid-cols-3">
-                <MetricCard
-                  label="Average Accuracy"
-                  value={averageAccuracy !== null ? `${averageAccuracy.toFixed(1)}%` : "-"}
-                  helperText="Average across all completed rounds"
-                />
-                <MetricCard
-                  label="Average WPM"
-                  value={averageWpm !== null ? averageWpm.toFixed(1) : "-"}
-                  helperText="Average across all completed rounds"
-                />
-                <MetricCard
-                  label="Completed Rounds"
-                  value={`${roundCount}`}
-                  helperText="Total 10-word rounds finished this session"
-                />
-              </div>
-            </div>
+            <PracticeTab
+              targetText={targetText}
+              typedText={typedText}
+              averageAccuracy={averageAccuracy}
+              averageWpm={averageWpm}
+              roundCount={roundCount}
+              onTypedTextChange={handleTypedTextChange}
+            />
           ) : (
-            <div className="w-full rounded-[1.5rem] border border-zinc-200 bg-zinc-50 px-6 py-10 text-left sm:px-10 sm:py-12">
-              <div className="grid gap-4 lg:grid-cols-2">
-                <TrendChart
-                  title="WPM Over Rounds"
-                  description="Per-round WPM and running average (last 10 rounds)"
-                  data={recentRoundHistory}
-                  valueKey="wpm"
-                  averageKey="averageWpm"
-                  color="#0f766e"
-                  averageColor="#0ea5e9"
-                  valueLabel="Round WPM"
-                  averageLabel="Avg WPM"
-                />
-                <TrendChart
-                  title="Accuracy Over Rounds"
-                  description="Per-round accuracy and running average (last 10 rounds)"
-                  data={recentRoundHistory}
-                  valueKey="accuracy"
-                  averageKey="averageAccuracy"
-                  color="#1d4ed8"
-                  averageColor="#f97316"
-                  valueLabel="Round Accuracy"
-                  averageLabel="Avg Accuracy"
-                  suffix="%"
-                />
-              </div>
-
-              <div className="rounded-2xl border border-zinc-200 bg-white px-5 py-4">
-                <h2 className="text-sm font-semibold uppercase tracking-[0.25em] text-zinc-500">
-                  Active weak patterns
-                </h2>
-                {activeWeakPatterns.length > 0 ? (
-                  <p className="mt-2 text-sm text-zinc-700">
-                    {activeWeakPatterns.join(", ")}
-                  </p>
-                ) : (
-                  <p className="mt-2 text-sm text-zinc-500">
-                    Build up a few repeated mistakes to unlock targeted pattern practice.
-                  </p>
-                )}
-              </div>
-
-              <div className="mt-6 rounded-2xl border border-zinc-200 bg-white px-5 py-4">
-                <div className="flex items-center justify-between gap-4">
-                  <div>
-                    <h2 className="text-sm font-semibold uppercase tracking-[0.25em] text-zinc-500">
-                      Errors by letter
-                    </h2>
-                    <p className="mt-1 text-sm text-zinc-500">
-                      Session totals grouped by target letters that were missed.
-                    </p>
-                  </div>
-                </div>
-
-                {sortedErrorsByLetter.length > 0 ? (
-                  <ul className="mt-4 space-y-2">
-                    {sortedErrorsByLetter.map(([letter, count]) => (
-                      <li key={letter} className="flex items-center justify-between rounded-xl bg-zinc-50 px-4 py-3 text-sm">
-                        <span className="font-medium text-zinc-700">{letter}</span>
-                        <span className="text-zinc-900">{count}</span>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="mt-4 text-sm text-zinc-500">No letter-level errors yet.</p>
-                )}
-              </div>
-
-              <div className="mt-4 rounded-2xl border border-zinc-200 bg-white px-5 py-4">
-                <div>
-                  <h2 className="text-sm font-semibold uppercase tracking-[0.25em] text-zinc-500">
-                    Error patterns
-                  </h2>
-                  <p className="mt-1 text-sm text-zinc-500">
-                    Session totals for missed-letter pairs used in adaptive prompt selection.
-                  </p>
-                </div>
-
-                {sortedErrorsByPattern.length > 0 ? (
-                  <ul className="mt-4 space-y-2">
-                    {sortedErrorsByPattern.map(([pattern, count]) => (
-                      <li key={pattern} className="flex items-center justify-between rounded-xl bg-zinc-50 px-4 py-3 text-sm">
-                        <span className="font-medium text-zinc-700">
-                          {pattern}
-                          {count > 1 ? <span className="ml-2 text-xs uppercase tracking-[0.2em] text-zinc-400">consistent</span> : null}
-                        </span>
-                        <span className="text-zinc-900">{count}</span>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="mt-4 text-sm text-zinc-500">No error patterns yet.</p>
-                )}
-              </div>
-            </div>
+            <ProfileTab
+              roundHistory={roundHistory}
+              activeWeakPatterns={activeWeakPatterns}
+              sessionLetterErrors={sessionLetterErrors}
+              sessionPatternErrors={sessionPatternErrors}
+            />
           )}
         </div>
       </div>
     </main>
-  );
-}
-
-function MetricCard({
-  label,
-  value,
-  helperText,
-}: {
-  label: string;
-  value: string;
-  helperText: string;
-}) {
-  return (
-    <div className="rounded-2xl border border-zinc-200 bg-white px-4 py-4">
-      <p className="text-xs font-semibold uppercase tracking-[0.24em] text-zinc-500">{label}</p>
-      <p className="mt-2 text-2xl font-semibold tracking-tight text-zinc-900">{value}</p>
-      <p className="mt-1 text-sm text-zinc-500">{helperText}</p>
-    </div>
-  );
-}
-
-function TrendChart({
-  title,
-  description,
-  data,
-  valueKey,
-  averageKey,
-  color,
-  averageColor,
-  valueLabel,
-  averageLabel,
-  suffix = "",
-}: {
-  title: string;
-  description: string;
-  data: RoundHistoryEntry[];
-  valueKey: "wpm" | "accuracy";
-  averageKey: "averageWpm" | "averageAccuracy";
-  color: string;
-  averageColor: string;
-  valueLabel: string;
-  averageLabel: string;
-  suffix?: string;
-}) {
-  return (
-    <div className="rounded-2xl border border-zinc-200 bg-white px-5 py-4">
-      <h2 className="text-sm font-semibold uppercase tracking-[0.25em] text-zinc-500">{title}</h2>
-      <p className="mt-1 text-sm text-zinc-500">{description}</p>
-
-      {data.length > 0 ? (
-        <div className="mt-4 h-64 w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 4 }}>
-              <CartesianGrid strokeDasharray="4 4" stroke="#e4e4e7" />
-              <XAxis dataKey="round" stroke="#71717a" tickLine={false} axisLine={false} />
-              <YAxis stroke="#71717a" tickLine={false} axisLine={false} width={34} />
-              <Tooltip
-                formatter={(value, name) => {
-                  const numericValue = typeof value === "number" ? value : Number(value ?? 0);
-                  return [`${numericValue.toFixed(1)}${suffix}`, String(name)];
-                }}
-                labelFormatter={(label) => `Round ${String(label)}`}
-              />
-              <Legend />
-              <Line
-                type="monotone"
-                dataKey={valueKey}
-                name={valueLabel}
-                stroke={color}
-                strokeWidth={2.5}
-                dot={{ r: 2 }}
-                activeDot={{ r: 5 }}
-              />
-              <Line
-                type="monotone"
-                dataKey={averageKey}
-                name={averageLabel}
-                stroke={averageColor}
-                strokeWidth={2.5}
-                strokeDasharray="5 4"
-                dot={false}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      ) : (
-        <p className="mt-4 text-sm text-zinc-500">Complete a round to start this chart.</p>
-      )}
-    </div>
   );
 }

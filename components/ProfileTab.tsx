@@ -1,0 +1,143 @@
+"use client";
+
+import { useMemo } from "react";
+
+import { CHART_ROUND_LIMIT } from "../lib/sessionConfig";
+import type { RoundHistoryEntry } from "../types/typing";
+import { TrendChart } from "./TrendChart";
+
+type ProfileTabProps = {
+  roundHistory: RoundHistoryEntry[];
+  activeWeakPatterns: string[];
+  sessionLetterErrors: Record<string, number>;
+  sessionPatternErrors: Record<string, number>;
+};
+
+export function ProfileTab({
+  roundHistory,
+  activeWeakPatterns,
+  sessionLetterErrors,
+  sessionPatternErrors,
+}: ProfileTabProps) {
+  const recentRoundHistory = useMemo(() => {
+    return roundHistory.slice(-CHART_ROUND_LIMIT);
+  }, [roundHistory]);
+
+  const sortedErrorsByLetter = useMemo(() => {
+    return Object.entries(sessionLetterErrors).sort(
+      (firstEntry, secondEntry) => secondEntry[1] - firstEntry[1],
+    );
+  }, [sessionLetterErrors]);
+
+  const sortedErrorsByPattern = useMemo(() => {
+    return Object.entries(sessionPatternErrors).sort(
+      (firstEntry, secondEntry) => secondEntry[1] - firstEntry[1],
+    );
+  }, [sessionPatternErrors]);
+
+  return (
+    <div className="w-full rounded-[1.5rem] border border-zinc-200 bg-zinc-50 px-6 py-10 text-left sm:px-10 sm:py-12">
+      <div className="grid gap-4 lg:grid-cols-2">
+        <TrendChart
+          title="WPM Over Rounds"
+          description="Per-round WPM and running average (last 10 rounds)"
+          data={recentRoundHistory}
+          valueKey="wpm"
+          averageKey="averageWpm"
+          color="#0f766e"
+          averageColor="#0ea5e9"
+          valueLabel="Round WPM"
+          averageLabel="Avg WPM"
+        />
+        <TrendChart
+          title="Accuracy Over Rounds"
+          description="Per-round accuracy and running average (last 10 rounds)"
+          data={recentRoundHistory}
+          valueKey="accuracy"
+          averageKey="averageAccuracy"
+          color="#1d4ed8"
+          averageColor="#f97316"
+          valueLabel="Round Accuracy"
+          averageLabel="Avg Accuracy"
+          suffix="%"
+        />
+      </div>
+
+      <div className="rounded-2xl border border-zinc-200 bg-white px-5 py-4">
+        <h2 className="text-sm font-semibold uppercase tracking-[0.25em] text-zinc-500">
+          Active weak patterns
+        </h2>
+        {activeWeakPatterns.length > 0 ? (
+          <p className="mt-2 text-sm text-zinc-700">{activeWeakPatterns.join(", ")}</p>
+        ) : (
+          <p className="mt-2 text-sm text-zinc-500">
+            Build up a few repeated mistakes to unlock targeted pattern practice.
+          </p>
+        )}
+      </div>
+
+      <div className="mt-6 rounded-2xl border border-zinc-200 bg-white px-5 py-4">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <h2 className="text-sm font-semibold uppercase tracking-[0.25em] text-zinc-500">
+              Errors by letter
+            </h2>
+            <p className="mt-1 text-sm text-zinc-500">
+              Session totals grouped by target letters that were missed.
+            </p>
+          </div>
+        </div>
+
+        {sortedErrorsByLetter.length > 0 ? (
+          <ul className="mt-4 space-y-2">
+            {sortedErrorsByLetter.map(([letter, count]) => (
+              <li
+                key={letter}
+                className="flex items-center justify-between rounded-xl bg-zinc-50 px-4 py-3 text-sm"
+              >
+                <span className="font-medium text-zinc-700">{letter}</span>
+                <span className="text-zinc-900">{count}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-4 text-sm text-zinc-500">No letter-level errors yet.</p>
+        )}
+      </div>
+
+      <div className="mt-4 rounded-2xl border border-zinc-200 bg-white px-5 py-4">
+        <div>
+          <h2 className="text-sm font-semibold uppercase tracking-[0.25em] text-zinc-500">
+            Error patterns
+          </h2>
+          <p className="mt-1 text-sm text-zinc-500">
+            Session totals for missed-letter pairs used in adaptive prompt selection.
+          </p>
+        </div>
+
+        {sortedErrorsByPattern.length > 0 ? (
+          <ul className="mt-4 space-y-2">
+            {sortedErrorsByPattern.map(([pattern, count]) => (
+              <li
+                key={pattern}
+                className="flex items-center justify-between rounded-xl bg-zinc-50 px-4 py-3 text-sm"
+              >
+                <span className="font-medium text-zinc-700">
+                  {pattern}
+                  {count > 1 ? (
+                    <span className="ml-2 text-xs uppercase tracking-[0.2em] text-zinc-400">
+                      consistent
+                    </span>
+                  ) : null}
+                </span>
+                <span className="text-zinc-900">{count}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-4 text-sm text-zinc-500">No error patterns yet.</p>
+        )}
+      </div>
+    </div>
+  );
+}
