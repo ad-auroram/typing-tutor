@@ -1,6 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 
 import { wordBank } from "../data/wordBank";
 import { getWeakPatterns, selectNextWords } from "../lib/promptSelection";
@@ -9,8 +19,17 @@ import { analyzeTypingAttempt } from "../lib/typingMetrics";
 const ROUND_WORD_COUNT = 10;
 const RECENT_WORD_LIMIT = 30;
 const ACTIVE_TAB_STORAGE_KEY = "typingTutor.activeTab";
+const ROUND_HISTORY_STORAGE_KEY = "typingTutor.roundHistory";
 
 const INITIAL_ROUND_WORDS = wordBank.slice(0, ROUND_WORD_COUNT).map((entry) => entry.word);
+
+type RoundHistoryEntry = {
+  round: number;
+  accuracy: number;
+  wpm: number;
+  averageAccuracy: number;
+  averageWpm: number;
+};
 
 function mergeCountMaps(
   previousCounts: Record<string, number>,
@@ -43,6 +62,11 @@ export default function Home() {
   const [sessionLetterErrors, setSessionLetterErrors] = useState<Record<string, number>>({});
   const [sessionPatternErrors, setSessionPatternErrors] = useState<Record<string, number>>({});
   const [activeWeakPatterns, setActiveWeakPatterns] = useState<string[]>([]);
+  const [roundHistory, setRoundHistory] = useState<RoundHistoryEntry[]>(() => {
+    if (typeof window === "undefined") return [];
+    const stored = window.localStorage.getItem(ROUND_HISTORY_STORAGE_KEY);
+    return stored ? JSON.parse(stored) : [];
+  });
 
   const targetText = useMemo(() => {
     return currentRoundWords.join(" ");
@@ -72,9 +96,23 @@ export default function Home() {
       ROUND_WORD_COUNT,
     );
 
+    const nextRoundCount = roundCount + 1;
+    const nextTotalAccuracy = totalAccuracy + roundMetrics.accuracy;
+    const nextTotalWpm = totalWpm + roundMetrics.wpm;
+
     setRoundCount((previousCount) => previousCount + 1);
     setTotalAccuracy((previousTotal) => previousTotal + roundMetrics.accuracy);
     setTotalWpm((previousTotal) => previousTotal + roundMetrics.wpm);
+    setRoundHistory((previousHistory) => [
+      ...previousHistory,
+      {
+        round: nextRoundCount,
+        accuracy: roundMetrics.accuracy,
+        wpm: roundMetrics.wpm,
+        averageAccuracy: nextTotalAccuracy / nextRoundCount,
+        averageWpm: nextTotalWpm / nextRoundCount,
+      },
+    ]);
     setSessionPatternErrors(updatedSessionPatternErrors);
     setSessionLetterErrors(updatedSessionLetterErrors);
     setActiveWeakPatterns(weakPatterns);
@@ -120,6 +158,7 @@ export default function Home() {
 
   const averageAccuracy = roundCount > 0 ? totalAccuracy / roundCount : null;
   const averageWpm = roundCount > 0 ? totalWpm / roundCount : null;
+  const recentRoundHistory = roundHistory.slice(-10);
 
   useEffect(() => {
     const storedTab = window.localStorage.getItem(ACTIVE_TAB_STORAGE_KEY);
@@ -132,6 +171,10 @@ export default function Home() {
   useEffect(() => {
     window.localStorage.setItem(ACTIVE_TAB_STORAGE_KEY, activeTab);
   }, [activeTab]);
+
+  useEffect(() => {
+    window.localStorage.setItem(ROUND_HISTORY_STORAGE_KEY, JSON.stringify(roundHistory));
+  }, [roundHistory]);
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,_#f8f8f8_0%,_#ececec_55%,_#e5e5e5_100%)] px-6 text-center">
@@ -254,6 +297,32 @@ export default function Home() {
             </div>
           ) : (
             <div className="w-full rounded-[1.5rem] border border-zinc-200 bg-zinc-50 px-6 py-10 text-left sm:px-10 sm:py-12">
+              <div className="grid gap-4 lg:grid-cols-2">
+                <TrendChart
+                  title="WPM Over Rounds"
+                  description="Per-round WPM and running average (last 10 rounds)"
+                  data={recentRoundHistory}
+                  valueKey="wpm"
+                  averageKey="averageWpm"
+                  color="#0f766e"
+                  averageColor="#0ea5e9"
+                  valueLabel="Round WPM"
+                  averageLabel="Avg WPM"
+                />
+                <TrendChart
+                  title="Accuracy Over Rounds"
+                  description="Per-round accuracy and running average (last 10 rounds)"
+                  data={recentRoundHistory}
+                  valueKey="accuracy"
+                  averageKey="averageAccuracy"
+                  color="#1d4ed8"
+                  averageColor="#f97316"
+                  valueLabel="Round Accuracy"
+                  averageLabel="Avg Accuracy"
+                  suffix="%"
+                />
+              </div>
+
               <div className="rounded-2xl border border-zinc-200 bg-white px-5 py-4">
                 <h2 className="text-sm font-semibold uppercase tracking-[0.25em] text-zinc-500">
                   Active weak patterns
@@ -343,6 +412,77 @@ function MetricCard({
       <p className="text-xs font-semibold uppercase tracking-[0.24em] text-zinc-500">{label}</p>
       <p className="mt-2 text-2xl font-semibold tracking-tight text-zinc-900">{value}</p>
       <p className="mt-1 text-sm text-zinc-500">{helperText}</p>
+    </div>
+  );
+}
+
+function TrendChart({
+  title,
+  description,
+  data,
+  valueKey,
+  averageKey,
+  color,
+  averageColor,
+  valueLabel,
+  averageLabel,
+  suffix = "",
+}: {
+  title: string;
+  description: string;
+  data: RoundHistoryEntry[];
+  valueKey: "wpm" | "accuracy";
+  averageKey: "averageWpm" | "averageAccuracy";
+  color: string;
+  averageColor: string;
+  valueLabel: string;
+  averageLabel: string;
+  suffix?: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-zinc-200 bg-white px-5 py-4">
+      <h2 className="text-sm font-semibold uppercase tracking-[0.25em] text-zinc-500">{title}</h2>
+      <p className="mt-1 text-sm text-zinc-500">{description}</p>
+
+      {data.length > 0 ? (
+        <div className="mt-4 h-64 w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 4 }}>
+              <CartesianGrid strokeDasharray="4 4" stroke="#e4e4e7" />
+              <XAxis dataKey="round" stroke="#71717a" tickLine={false} axisLine={false} />
+              <YAxis stroke="#71717a" tickLine={false} axisLine={false} width={34} />
+              <Tooltip
+                formatter={(value, name) => {
+                  const numericValue = typeof value === "number" ? value : Number(value ?? 0);
+                  return [`${numericValue.toFixed(1)}${suffix}`, String(name)];
+                }}
+                labelFormatter={(label) => `Round ${String(label)}`}
+              />
+              <Legend />
+              <Line
+                type="monotone"
+                dataKey={valueKey}
+                name={valueLabel}
+                stroke={color}
+                strokeWidth={2.5}
+                dot={{ r: 2 }}
+                activeDot={{ r: 5 }}
+              />
+              <Line
+                type="monotone"
+                dataKey={averageKey}
+                name={averageLabel}
+                stroke={averageColor}
+                strokeWidth={2.5}
+                strokeDasharray="5 4"
+                dot={false}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      ) : (
+        <p className="mt-4 text-sm text-zinc-500">Complete a round to start this chart.</p>
+      )}
     </div>
   );
 }
