@@ -5,9 +5,16 @@ import { useMemo } from "react";
 type PromptDisplayProps = {
   targetText: string;
   typedText: string;
+  erroredIndices?: number[];
 };
 
-export function PromptDisplay({ targetText, typedText }: PromptDisplayProps) {
+export function PromptDisplay({
+  targetText,
+  typedText,
+  erroredIndices = [],
+}: PromptDisplayProps) {
+  const erroredIndexSet = useMemo(() => new Set(erroredIndices), [erroredIndices]);
+
   const characterStates = useMemo(() => {
     return Array.from(targetText).map((character, index) => {
       const typedCharacter = typedText[index];
@@ -44,9 +51,12 @@ export function PromptDisplay({ targetText, typedText }: PromptDisplayProps) {
           {Array.from(segment.text).map((character, offset) => {
             const index = segment.startIndex + offset;
             const state = characterStates[index];
+            const isErroredIndex = erroredIndexSet.has(index);
 
             const colorClass =
-              state === "correct"
+              isErroredIndex
+                ? "text-red-500"
+                : state === "correct"
                 ? "text-zinc-950"
                 : state === "mistyped"
                   ? "text-red-500"

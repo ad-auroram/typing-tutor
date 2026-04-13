@@ -11,6 +11,7 @@ type ProfileTabProps = {
   activeWeakPatterns: string[];
   sessionLetterErrors: Record<string, number>;
   sessionPatternErrors: Record<string, number>;
+  onResetSession: () => void;
 };
 
 export function ProfileTab({
@@ -18,7 +19,12 @@ export function ProfileTab({
   activeWeakPatterns,
   sessionLetterErrors,
   sessionPatternErrors,
+  onResetSession,
 }: ProfileTabProps) {
+  const getErrorTextColor = (count: number) => {
+    return count >= 3 ? "text-zinc-900" : "text-zinc-500";
+  };
+
   const recentRoundHistory = useMemo(() => {
     return roundHistory.slice(-CHART_ROUND_LIMIT);
   }, [roundHistory]);
@@ -95,8 +101,8 @@ export function ProfileTab({
                 key={letter}
                 className="flex items-center justify-between rounded-xl bg-zinc-50 px-4 py-3 text-sm"
               >
-                <span className="font-medium text-zinc-700">{letter}</span>
-                <span className="text-zinc-900">{count}</span>
+                <span className={`font-medium ${getErrorTextColor(count)}`}>{letter}</span>
+                <span className={getErrorTextColor(count)}>{count}</span>
               </li>
             ))}
           </ul>
@@ -122,21 +128,24 @@ export function ProfileTab({
                 key={pattern}
                 className="flex items-center justify-between rounded-xl bg-zinc-50 px-4 py-3 text-sm"
               >
-                <span className="font-medium text-zinc-700">
-                  {pattern}
-                  {count > 1 ? (
-                    <span className="ml-2 text-xs uppercase tracking-[0.2em] text-zinc-400">
-                      consistent
-                    </span>
-                  ) : null}
-                </span>
-                <span className="text-zinc-900">{count}</span>
+                <span className={`font-medium ${getErrorTextColor(count)}`}>{pattern}</span>
+                <span className={getErrorTextColor(count)}>{count}</span>
               </li>
             ))}
           </ul>
         ) : (
           <p className="mt-4 text-sm text-zinc-500">No error patterns yet.</p>
         )}
+      </div>
+
+      <div className="mt-6 flex justify-end">
+        <button
+          type="button"
+          onClick={onResetSession}
+          className="rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50"
+        >
+          Reset Session
+        </button>
       </div>
     </div>
   );

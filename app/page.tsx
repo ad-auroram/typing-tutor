@@ -5,17 +5,17 @@ import { PracticeTab } from "../components/PracticeTab";
 import { ProfileTab } from "../components/ProfileTab";
 
 import { wordBank } from "../data/wordBank";
+import { useActiveTab } from "../hooks/useActiveTab";
+import { useRoundHistory } from "../hooks/useRoundHistory";
 import {
-  ACTIVE_TAB_STORAGE_KEY,
   RECENT_WORD_LIMIT,
-  ROUND_HISTORY_STORAGE_KEY,
   ROUND_WORD_COUNT,
 } from "../lib/sessionConfig";
 import { getWeakPatterns, selectNextWords } from "../lib/promptSelection";
 import { analyzeTypingAttempt } from "../lib/typingMetrics";
-import type { ActiveTab, RoundHistoryEntry } from "../types/typing";
 
 const INITIAL_ROUND_WORDS = wordBank.slice(0, ROUND_WORD_COUNT).map((entry) => entry.word);
+const ERROR_RETENTION_ROUNDS = 5;
 
 function getRandomStarterWords(count: number): string[] {
   return selectNextWords(
@@ -42,10 +42,60 @@ function mergeCountMaps(
   return merged;
 }
 
+function updateSessionErrorMemory({
+  previousCounts,
+  previousLastSeen,
+  roundErrors,
+  currentRound,
+  retentionRounds,
+}: {
+  previousCounts: Record<string, number>;
+  previousLastSeen: Record<string, number>;
+  roundErrors: Record<string, number>;
+  currentRound: number;
+  retentionRounds: number;
+}) {
+  const nextCounts = { ...previousCounts };
+  const nextLastSeen = { ...previousLastSeen };
+
+  for (const [errorKey, count] of Object.entries(roundErrors)) {
+    if (count <= 0) {
+      continue;
+    }
+
+    nextCounts[errorKey] = (nextCounts[errorKey] ?? 0) + count;
+    nextLastSeen[errorKey] = currentRound;
+  }
+
+  for (const errorKey of Object.keys(nextCounts)) {
+    const lastSeenRound = nextLastSeen[errorKey];
+    if (typeof lastSeenRound !== "number") {
+      delete nextCounts[errorKey];
+      delete nextLastSeen[errorKey];
+      continue;
+    }
+
+    if (currentRound - lastSeenRound >= retentionRounds) {
+      delete nextCounts[errorKey];
+      delete nextLastSeen[errorKey];
+    }
+  }
+
+  return { counts: nextCounts, lastSeen: nextLastSeen };
+}
+
+function getTopErrorKey(errorCounts: Record<string, number>): string | null {
+  const [topEntry] = Object.entries(errorCounts).sort(
+    (firstEntry, secondEntry) => secondEntry[1] - firstEntry[1],
+  );
+
+  return topEntry?.[0] ?? null;
+}
+
 export default function Home() {
   const startTimeRef = useRef(Date.now());
   const hasInitializedStarterWordsRef = useRef(false);
-  const [activeTab, setActiveTab] = useState<ActiveTab>("practice");
+  const { activeTab, setActiveTab } = useActiveTab("practice");
   const [currentRoundWords, setCurrentRoundWords] = useState<string[]>(() => {
     if (INITIAL_ROUND_WORDS.length > 0) {
       return INITIAL_ROUND_WORDS;
@@ -58,46 +108,91 @@ export default function Home() {
   const [roundCount, setRoundCount] = useState(0);
   const [totalAccuracy, setTotalAccuracy] = useState(0);
   const [totalWpm, setTotalWpm] = useState(0);
+  const [roundWrongKeyCount, setRoundWrongKeyCount] = useState(0);
+  const [roundErroredIndices, setRoundErroredIndices] = useState<number[]>([]);
+  const [roundLetterErrors, setRoundLetterErrors] = useState<Record<string, number>>({});
+  const [roundPatternErrors, setRoundPatternErrors] = useState<Record<string, number>>({});
   const [sessionLetterErrors, setSessionLetterErrors] = useState<Record<string, number>>({});
   const [sessionPatternErrors, setSessionPatternErrors] = useState<Record<string, number>>({});
+  const [sessionLetterLastSeenRound, setSessionLetterLastSeenRound] = useState<Record<string, number>>({});
+  const [sessionPatternLastSeenRound, setSessionPatternLastSeenRound] = useState<Record<string, number>>({});
   const [activeWeakPatterns, setActiveWeakPatterns] = useState<string[]>([]);
-  const [roundHistory, setRoundHistory] = useState<RoundHistoryEntry[]>(() => {
-    if (typeof window === "undefined") return [];
-    const stored = window.localStorage.getItem(ROUND_HISTORY_STORAGE_KEY);
-
-    if (!stored) {
-      return [];
-    }
-
-    try {
-      const parsed = JSON.parse(stored);
-      if (!Array.isArray(parsed)) {
-        return [];
-      }
-
-      return parsed as RoundHistoryEntry[];
-    } catch {
-      return [];
-    }
-  });
+  const { roundHistory, setRoundHistory } = useRoundHistory();
 
   const targetText = useMemo(() => {
     return currentRoundWords.join(" ");
   }, [currentRoundWords]);
 
+  const recordBlockedError = (index: number) => {
+    const expectedCharacter = targetText[index];
+
+    if (!expectedCharacter) {
+      return;
+    }
+
+    const normalizedCharacter = expectedCharacter.toLowerCase();
+    if (normalizedCharacter !== " ") {
+      setRoundLetterErrors((previousErrors) => ({
+        ...previousErrors,
+        [normalizedCharacter]: (previousErrors[normalizedCharacter] ?? 0) + 1,
+      }));
+    }
+
+    const previousCharacter = targetText[index - 1] ?? "";
+    const pattern = `${previousCharacter.toLowerCase()}${normalizedCharacter}`;
+    if (pattern.length === 2 && !pattern.includes(" ")) {
+      setRoundPatternErrors((previousErrors) => ({
+        ...previousErrors,
+        [pattern]: (previousErrors[pattern] ?? 0) + 1,
+      }));
+    }
+
+    setRoundErroredIndices((previousIndices) => {
+      if (previousIndices.includes(index)) {
+        return previousIndices;
+      }
+
+      return [...previousIndices, index];
+    });
+
+    setRoundWrongKeyCount((previousCount) => previousCount + 1);
+  };
+
   const finishRound = (nextTypedText: string) => {
     const elapsedMilliseconds = Date.now() - startTimeRef.current;
     const roundMetrics = analyzeTypingAttempt(targetText, nextTypedText, elapsedMilliseconds);
 
-    const updatedSessionPatternErrors = mergeCountMaps(
-      sessionPatternErrors,
-      roundMetrics.errorsByPattern,
+    const roundAccuracy =
+      targetText.length > 0
+        ? (targetText.length / (targetText.length + roundWrongKeyCount)) * 100
+        : 100;
+    const nextRoundCount = roundCount + 1;
+
+    const mergedRoundPatternErrors = mergeCountMaps(roundMetrics.errorsByPattern, roundPatternErrors);
+    const mergedRoundLetterErrors = mergeCountMaps(roundMetrics.errorsByLetter, roundLetterErrors);
+
+    const updatedPatternMemory = updateSessionErrorMemory({
+      previousCounts: sessionPatternErrors,
+      previousLastSeen: sessionPatternLastSeenRound,
+      roundErrors: mergedRoundPatternErrors,
+      currentRound: nextRoundCount,
+      retentionRounds: ERROR_RETENTION_ROUNDS,
+    });
+    const updatedLetterMemory = updateSessionErrorMemory({
+      previousCounts: sessionLetterErrors,
+      previousLastSeen: sessionLetterLastSeenRound,
+      roundErrors: mergedRoundLetterErrors,
+      currentRound: nextRoundCount,
+      retentionRounds: ERROR_RETENTION_ROUNDS,
+    });
+    const updatedSessionPatternErrors = updatedPatternMemory.counts;
+    const updatedSessionLetterErrors = updatedLetterMemory.counts;
+    const weakPatterns = Array.from(
+      new Set([
+        getTopErrorKey(updatedSessionLetterErrors),
+        ...getWeakPatterns(updatedSessionPatternErrors, 2, 4),
+      ].filter((pattern): pattern is string => Boolean(pattern))),
     );
-    const updatedSessionLetterErrors = mergeCountMaps(
-      sessionLetterErrors,
-      roundMetrics.errorsByLetter,
-    );
-    const weakPatterns = getWeakPatterns(updatedSessionPatternErrors, 2, 4);
     const nextRecentWords = [...recentWords, ...currentRoundWords].slice(-RECENT_WORD_LIMIT);
     const nextRound = selectNextWords(
       {
@@ -109,18 +204,17 @@ export default function Home() {
       ROUND_WORD_COUNT,
     );
 
-    const nextRoundCount = roundCount + 1;
-    const nextTotalAccuracy = totalAccuracy + roundMetrics.accuracy;
+    const nextTotalAccuracy = totalAccuracy + roundAccuracy;
     const nextTotalWpm = totalWpm + roundMetrics.wpm;
 
     setRoundCount((previousCount) => previousCount + 1);
-    setTotalAccuracy((previousTotal) => previousTotal + roundMetrics.accuracy);
+    setTotalAccuracy((previousTotal) => previousTotal + roundAccuracy);
     setTotalWpm((previousTotal) => previousTotal + roundMetrics.wpm);
     setRoundHistory((previousHistory) => [
       ...previousHistory,
       {
         round: nextRoundCount,
-        accuracy: roundMetrics.accuracy,
+        accuracy: roundAccuracy,
         wpm: roundMetrics.wpm,
         averageAccuracy: nextTotalAccuracy / nextRoundCount,
         averageWpm: nextTotalWpm / nextRoundCount,
@@ -128,23 +222,21 @@ export default function Home() {
     ]);
     setSessionPatternErrors(updatedSessionPatternErrors);
     setSessionLetterErrors(updatedSessionLetterErrors);
+    setSessionPatternLastSeenRound(updatedPatternMemory.lastSeen);
+    setSessionLetterLastSeenRound(updatedLetterMemory.lastSeen);
     setActiveWeakPatterns(weakPatterns);
     setRecentWords(nextRecentWords);
     setCurrentRoundWords(nextRound.map((entry) => entry.word));
     setTypedText("");
+    setRoundWrongKeyCount(0);
+    setRoundErroredIndices([]);
+    setRoundLetterErrors({});
+    setRoundPatternErrors({});
     startTimeRef.current = Date.now();
   };
 
   const averageAccuracy = roundCount > 0 ? totalAccuracy / roundCount : null;
   const averageWpm = roundCount > 0 ? totalWpm / roundCount : null;
-
-  useEffect(() => {
-    const storedTab = window.localStorage.getItem(ACTIVE_TAB_STORAGE_KEY);
-
-    if (storedTab === "practice" || storedTab === "profile") {
-      setActiveTab(storedTab);
-    }
-  }, []);
 
   useEffect(() => {
     if (hasInitializedStarterWordsRef.current) {
@@ -160,23 +252,52 @@ export default function Home() {
 
     setCurrentRoundWords(randomStarterWords);
     setTypedText("");
+    setRoundWrongKeyCount(0);
+    setRoundErroredIndices([]);
+    setRoundLetterErrors({});
+    setRoundPatternErrors({});
     startTimeRef.current = Date.now();
   }, []);
 
-  useEffect(() => {
-    window.localStorage.setItem(ACTIVE_TAB_STORAGE_KEY, activeTab);
-  }, [activeTab]);
+  const handleTypeKey = (key: string) => {
+    if (typedText.length >= targetText.length) {
+      return;
+    }
 
-  useEffect(() => {
-    window.localStorage.setItem(ROUND_HISTORY_STORAGE_KEY, JSON.stringify(roundHistory));
-  }, [roundHistory]);
+    const currentIndex = typedText.length;
+    const expectedCharacter = targetText[currentIndex];
 
-  const handleTypedTextChange = (nextTypedText: string) => {
+    if (key !== expectedCharacter) {
+      recordBlockedError(currentIndex);
+      return;
+    }
+
+    const nextTypedText = `${typedText}${key}`;
     setTypedText(nextTypedText);
 
     if (nextTypedText.length === targetText.length) {
       finishRound(nextTypedText);
     }
+  };
+
+  const handleResetSession = () => {
+    setRoundCount(0);
+    setTotalAccuracy(0);
+    setTotalWpm(0);
+    setRoundWrongKeyCount(0);
+    setRoundErroredIndices([]);
+    setRoundLetterErrors({});
+    setRoundPatternErrors({});
+    setSessionLetterErrors({});
+    setSessionPatternErrors({});
+    setSessionLetterLastSeenRound({});
+    setSessionPatternLastSeenRound({});
+    setActiveWeakPatterns([]);
+    setRecentWords([]);
+    setRoundHistory([]);
+    setTypedText("");
+    setCurrentRoundWords(getRandomStarterWords(ROUND_WORD_COUNT));
+    startTimeRef.current = Date.now();
   };
 
   return (
@@ -188,7 +309,7 @@ export default function Home() {
               Typing Tutor Prototype
             </p>
             <h1 className="text-3xl font-semibold tracking-tight text-zinc-900 sm:text-5xl">
-              Adaptive typing excercises for pattern improvement
+              Adaptive typing excercises
             </h1>
             <p className="text-base text-zinc-600 sm:text-lg">
               Complete each round of 10 words to get a new adaptive prompt set based on weak
@@ -227,10 +348,11 @@ export default function Home() {
             <PracticeTab
               targetText={targetText}
               typedText={typedText}
+              erroredIndices={roundErroredIndices}
               averageAccuracy={averageAccuracy}
               averageWpm={averageWpm}
               roundCount={roundCount}
-              onTypedTextChange={handleTypedTextChange}
+              onTypeKey={handleTypeKey}
             />
           ) : (
             <ProfileTab
@@ -238,6 +360,7 @@ export default function Home() {
               activeWeakPatterns={activeWeakPatterns}
               sessionLetterErrors={sessionLetterErrors}
               sessionPatternErrors={sessionPatternErrors}
+              onResetSession={handleResetSession}
             />
           )}
         </div>
