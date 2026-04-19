@@ -94,6 +94,7 @@ function updateSessionErrorMemory({
 
 export default function Home() {
   const startTimeRef = useRef(Date.now());
+  const hasStartedTimingRef = useRef(false);
   const hasInitializedStarterWordsRef = useRef(false);
   const { activeTab, setActiveTab } = useActiveTab("practice");
   const { wordBankEntries, setWordBankEntries } = useWordBank();
@@ -251,7 +252,7 @@ export default function Home() {
     setRoundErroredIndices([]);
     setRoundLetterErrors({});
     setRoundPatternErrors({});
-    startTimeRef.current = Date.now();
+    hasStartedTimingRef.current = false;
   };
 
   const averageAccuracy = roundCount > 0 ? totalAccuracy / roundCount : null;
@@ -278,12 +279,17 @@ export default function Home() {
     setRoundErroredIndices([]);
     setRoundLetterErrors({});
     setRoundPatternErrors({});
-    startTimeRef.current = Date.now();
+    hasStartedTimingRef.current = false;
   }, []);
 
   const handleTypeKey = (key: string) => {
     if (typedText.length >= targetText.length) {
       return;
+    }
+
+    if (!hasStartedTimingRef.current) {
+      hasStartedTimingRef.current = true;
+      startTimeRef.current = Date.now();
     }
 
     const currentIndex = typedText.length;
@@ -325,7 +331,7 @@ export default function Home() {
     setRoundHistory([]);
     setTypedText("");
     setCurrentRoundWords(getRandomStarterWords(wordBankEntries, ROUND_WORD_COUNT));
-    startTimeRef.current = Date.now();
+    hasStartedTimingRef.current = false;
   };
 
   return (
