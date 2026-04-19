@@ -1,9 +1,10 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { MetricCard } from "./MetricCard";
 import { PromptDisplay } from "./PromptDisplay";
+import { getFingerGuidance, getHomeRowGuidance } from "../lib/typingGuidance";
 
 type PracticeTabProps = {
   targetText: string;
@@ -26,6 +27,32 @@ export function PracticeTab({
 }: PracticeTabProps) {
   const typingSurfaceRef = useRef<HTMLDivElement>(null);
   const [isFocused, setIsFocused] = useState(false);
+  const [guidanceText, setGuidanceText] = useState(getHomeRowGuidance());
+
+  const currentCharacter = useMemo(() => {
+    return typedText.length < targetText.length ? targetText[typedText.length] : undefined;
+  }, [targetText, typedText.length]);
+
+  useEffect(() => {
+    if (typedText.length === 0) {
+      setGuidanceText(getHomeRowGuidance());
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setGuidanceText(getFingerGuidance(currentCharacter));
+    }, 1200);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [currentCharacter, typedText.length]);
+
+  useEffect(() => {
+    if (typedText.length > 0) {
+      return;
+    }
+
+    setGuidanceText(getHomeRowGuidance());
+  }, [typedText.length, targetText]);
 
   return (
     <div className="w-full rounded-[1.5rem] border border-zinc-200 bg-zinc-50 px-6 py-10 sm:px-10 sm:py-12">
@@ -64,9 +91,10 @@ export function PracticeTab({
         />
       </div>
 
-      <p className="mt-3 text-sm text-zinc-500">
-        Click the typing area to focus. You must type the current
-        letter correctly to move forward.
+      <p className="mt-3 text-sm text-zinc-600">{guidanceText}</p>
+
+      <p className="mt-1 text-sm text-zinc-500">
+        Click the typing area to focus. You must type the current letter correctly to move forward.
       </p>
 
       <div className="mt-8 grid gap-4 text-left sm:grid-cols-3">

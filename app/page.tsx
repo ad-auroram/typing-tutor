@@ -7,6 +7,7 @@ import { ProfileTab } from "../components/ProfileTab";
 import { wordBank } from "../data/wordBank";
 import { useActiveTab } from "../hooks/useActiveTab";
 import { useRoundHistory } from "../hooks/useRoundHistory";
+import { useSessionErrors } from "../hooks/useSessionErrors";
 import {
   RECENT_WORD_LIMIT,
   ROUND_WORD_COUNT,
@@ -112,11 +113,17 @@ export default function Home() {
   const [roundErroredIndices, setRoundErroredIndices] = useState<number[]>([]);
   const [roundLetterErrors, setRoundLetterErrors] = useState<Record<string, number>>({});
   const [roundPatternErrors, setRoundPatternErrors] = useState<Record<string, number>>({});
-  const [sessionLetterErrors, setSessionLetterErrors] = useState<Record<string, number>>({});
-  const [sessionPatternErrors, setSessionPatternErrors] = useState<Record<string, number>>({});
-  const [sessionLetterLastSeenRound, setSessionLetterLastSeenRound] = useState<Record<string, number>>({});
-  const [sessionPatternLastSeenRound, setSessionPatternLastSeenRound] = useState<Record<string, number>>({});
-  const [activeWeakPatterns, setActiveWeakPatterns] = useState<string[]>([]);
+  const {
+    letterErrors: sessionLetterErrors,
+    setLetterErrors: setSessionLetterErrors,
+    patternErrors: sessionPatternErrors,
+    setPatternErrors: setSessionPatternErrors,
+    letterLastSeenRound: sessionLetterLastSeenRound,
+    setLetterLastSeenRound: setSessionLetterLastSeenRound,
+    patternLastSeenRound: sessionPatternLastSeenRound,
+    setPatternLastSeenRound: setSessionPatternLastSeenRound,
+    resetSessionErrors,
+  } = useSessionErrors();
   const { roundHistory, setRoundHistory } = useRoundHistory();
 
   const targetText = useMemo(() => {
@@ -224,7 +231,6 @@ export default function Home() {
     setSessionLetterErrors(updatedSessionLetterErrors);
     setSessionPatternLastSeenRound(updatedPatternMemory.lastSeen);
     setSessionLetterLastSeenRound(updatedLetterMemory.lastSeen);
-    setActiveWeakPatterns(weakPatterns);
     setRecentWords(nextRecentWords);
     setCurrentRoundWords(nextRound.map((entry) => entry.word));
     setTypedText("");
@@ -237,6 +243,14 @@ export default function Home() {
 
   const averageAccuracy = roundCount > 0 ? totalAccuracy / roundCount : null;
   const averageWpm = roundCount > 0 ? totalWpm / roundCount : null;
+  const activeWeakPatterns = useMemo(() => {
+    return Array.from(
+      new Set([
+        getTopErrorKey(sessionLetterErrors),
+        ...getWeakPatterns(sessionPatternErrors, 2, 4),
+      ].filter((pattern): pattern is string => Boolean(pattern))),
+    );
+  }, [sessionLetterErrors, sessionPatternErrors]);
 
   useEffect(() => {
     if (hasInitializedStarterWordsRef.current) {
@@ -288,11 +302,7 @@ export default function Home() {
     setRoundErroredIndices([]);
     setRoundLetterErrors({});
     setRoundPatternErrors({});
-    setSessionLetterErrors({});
-    setSessionPatternErrors({});
-    setSessionLetterLastSeenRound({});
-    setSessionPatternLastSeenRound({});
-    setActiveWeakPatterns([]);
+    resetSessionErrors();
     setRecentWords([]);
     setRoundHistory([]);
     setTypedText("");
