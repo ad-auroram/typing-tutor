@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import type { SetStateAction } from "react";
 
 import { SESSION_ERRORS_STORAGE_KEY } from "../lib/sessionConfig";
+import { usePersistedState } from "./usePersistedState";
 
 type SessionErrorsState = {
   letterErrors: Record<string, number>;
@@ -39,61 +40,64 @@ function parseStoredSessionErrors(storedValue: string | null): SessionErrorsStat
 }
 
 export function useSessionErrors() {
-  const [letterErrors, setLetterErrors] = useState<Record<string, number>>(() => {
-    if (typeof window === "undefined") {
-      return {};
-    }
-
-    return parseStoredSessionErrors(window.localStorage.getItem(SESSION_ERRORS_STORAGE_KEY)).letterErrors;
-  });
-  const [patternErrors, setPatternErrors] = useState<Record<string, number>>(() => {
-    if (typeof window === "undefined") {
-      return {};
-    }
-
-    return parseStoredSessionErrors(window.localStorage.getItem(SESSION_ERRORS_STORAGE_KEY)).patternErrors;
-  });
-  const [letterLastSeenRound, setLetterLastSeenRound] = useState<Record<string, number>>(() => {
-    if (typeof window === "undefined") {
-      return {};
-    }
-
-    return parseStoredSessionErrors(window.localStorage.getItem(SESSION_ERRORS_STORAGE_KEY)).letterLastSeenRound;
-  });
-  const [patternLastSeenRound, setPatternLastSeenRound] = useState<Record<string, number>>(() => {
-    if (typeof window === "undefined") {
-      return {};
-    }
-
-    return parseStoredSessionErrors(window.localStorage.getItem(SESSION_ERRORS_STORAGE_KEY)).patternLastSeenRound;
+  const { state: sessionErrors, setState: setSessionErrors } = usePersistedState<SessionErrorsState>({
+    storageKey: SESSION_ERRORS_STORAGE_KEY,
+    initialState: EMPTY_SESSION_ERRORS,
+    parse: parseStoredSessionErrors,
   });
 
-  useEffect(() => {
-    const payload: SessionErrorsState = {
-      letterErrors,
-      patternErrors,
-      letterLastSeenRound,
-      patternLastSeenRound,
-    };
+  const setLetterErrors = (update: SetStateAction<Record<string, number>>) => {
+    setSessionErrors((previousSessionErrors) => ({
+      ...previousSessionErrors,
+      letterErrors:
+        typeof update === "function"
+          ? update(previousSessionErrors.letterErrors)
+          : update,
+    }));
+  };
 
-    window.localStorage.setItem(SESSION_ERRORS_STORAGE_KEY, JSON.stringify(payload));
-  }, [letterErrors, letterLastSeenRound, patternErrors, patternLastSeenRound]);
+  const setPatternErrors = (update: SetStateAction<Record<string, number>>) => {
+    setSessionErrors((previousSessionErrors) => ({
+      ...previousSessionErrors,
+      patternErrors:
+        typeof update === "function"
+          ? update(previousSessionErrors.patternErrors)
+          : update,
+    }));
+  };
+
+  const setLetterLastSeenRound = (update: SetStateAction<Record<string, number>>) => {
+    setSessionErrors((previousSessionErrors) => ({
+      ...previousSessionErrors,
+      letterLastSeenRound:
+        typeof update === "function"
+          ? update(previousSessionErrors.letterLastSeenRound)
+          : update,
+    }));
+  };
+
+  const setPatternLastSeenRound = (update: SetStateAction<Record<string, number>>) => {
+    setSessionErrors((previousSessionErrors) => ({
+      ...previousSessionErrors,
+      patternLastSeenRound:
+        typeof update === "function"
+          ? update(previousSessionErrors.patternLastSeenRound)
+          : update,
+    }));
+  };
 
   const resetSessionErrors = () => {
-    setLetterErrors({});
-    setPatternErrors({});
-    setLetterLastSeenRound({});
-    setPatternLastSeenRound({});
+    setSessionErrors(EMPTY_SESSION_ERRORS);
   };
 
   return {
-    letterErrors,
+    letterErrors: sessionErrors.letterErrors,
     setLetterErrors,
-    patternErrors,
+    patternErrors: sessionErrors.patternErrors,
     setPatternErrors,
-    letterLastSeenRound,
+    letterLastSeenRound: sessionErrors.letterLastSeenRound,
     setLetterLastSeenRound,
-    patternLastSeenRound,
+    patternLastSeenRound: sessionErrors.patternLastSeenRound,
     setPatternLastSeenRound,
     resetSessionErrors,
   };

@@ -3,6 +3,61 @@
   tags: string[];
 };
 
+export function normalizeWordBankWord(word: string): string {
+  return word.trim().toLowerCase();
+}
+
+function buildWordTags(word: string): string[] {
+  const characters = Array.from(word);
+  const tags = new Set<string>();
+
+  for (const character of characters) {
+    tags.add(character);
+  }
+
+  for (let index = 0; index < characters.length - 1; index += 1) {
+    tags.add(`${characters[index]}${characters[index + 1]}`);
+  }
+
+  return Array.from(tags);
+}
+
+export function createWordBankEntry(word: string): WordBankEntry | null {
+  const normalizedWord = normalizeWordBankWord(word);
+
+  if (normalizedWord.length === 0) {
+    return null;
+  }
+
+  return {
+    word: normalizedWord,
+    tags: buildWordTags(normalizedWord),
+  };
+}
+
+export function createWordBankEntries(words: string[]): WordBankEntry[] {
+  const selectedWords = new Set<string>();
+
+  return words
+    .map(createWordBankEntry)
+    .filter((entry): entry is WordBankEntry => Boolean(entry))
+    .filter((entry) => {
+      if (selectedWords.has(entry.word)) {
+        return false;
+      }
+
+      selectedWords.add(entry.word);
+      return true;
+    });
+}
+
+export function parseWordBankText(text: string): string[] {
+  return text
+    .split(/[\n,;]+/)
+    .map(normalizeWordBankWord)
+    .filter((word) => word.length > 0);
+}
+
 export const wordBank: WordBankEntry[] = [
   { word: "the", tags: ["t", "h", "e", "th", "he"] },
   { word: "to", tags: ["t", "o", "to"] },

@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 
+import { sortErrorEntries } from "../lib/errorAnalytics";
 import { CHART_ROUND_LIMIT } from "../lib/sessionConfig";
 import type { RoundHistoryEntry } from "../types/typing";
 import { TrendChart } from "./TrendChart";
@@ -12,6 +13,9 @@ type ProfileTabProps = {
   sessionLetterErrors: Record<string, number>;
   sessionPatternErrors: Record<string, number>;
   onResetSession: () => void;
+  wordBankText: string;
+  onWordBankTextChange: (nextText: string) => void;
+  onApplyWordBank: () => void;
 };
 
 export function ProfileTab({
@@ -20,6 +24,9 @@ export function ProfileTab({
   sessionLetterErrors,
   sessionPatternErrors,
   onResetSession,
+  wordBankText,
+  onWordBankTextChange,
+  onApplyWordBank,
 }: ProfileTabProps) {
   const getErrorTextColor = (count: number) => {
     return count >= 3 ? "text-zinc-900" : "text-zinc-500";
@@ -30,15 +37,11 @@ export function ProfileTab({
   }, [roundHistory]);
 
   const sortedErrorsByLetter = useMemo(() => {
-    return Object.entries(sessionLetterErrors).sort(
-      (firstEntry, secondEntry) => secondEntry[1] - firstEntry[1],
-    );
+    return sortErrorEntries(sessionLetterErrors);
   }, [sessionLetterErrors]);
 
   const sortedErrorsByPattern = useMemo(() => {
-    return Object.entries(sessionPatternErrors).sort(
-      (firstEntry, secondEntry) => secondEntry[1] - firstEntry[1],
-    );
+    return sortErrorEntries(sessionPatternErrors);
   }, [sessionPatternErrors]);
 
   return (
@@ -146,6 +149,41 @@ export function ProfileTab({
         >
           Reset Session
         </button>
+      </div>
+
+      <div className="mt-6 rounded-2xl border border-zinc-200 bg-white px-5 py-4">
+        <div>
+          <h2 className="text-sm font-semibold uppercase tracking-[0.25em] text-zinc-500">
+            Word bank
+          </h2>
+          <p className="mt-1 text-sm text-zinc-500">
+            Edit the word list below, then apply the changes.
+          </p>
+        </div>
+
+        <label className="sr-only" htmlFor="word-bank-editor">
+          Edit comma-separated word bank
+        </label>
+        <textarea
+          id="word-bank-editor"
+          value={wordBankText}
+          onChange={(event) => onWordBankTextChange(event.target.value)}
+          className="mt-4 min-h-36 w-full rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-900 outline-none transition focus:border-zinc-400"
+          placeholder="the, to, i, and, of"
+        />
+
+        <div className="mt-3 flex items-center justify-between gap-4">
+          <p className="text-sm text-zinc-500">
+            Comma-separated words only. New words will be normalized to lowercase.
+          </p>
+          <button
+            type="button"
+            onClick={onApplyWordBank}
+            className="rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-zinc-400 hover:bg-zinc-50"
+          >
+            Apply
+          </button>
+        </div>
       </div>
     </div>
   );

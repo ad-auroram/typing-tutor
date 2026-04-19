@@ -1,5 +1,7 @@
 import type { WordBankEntry } from "../data/wordBank";
 
+const WEAK_PATTERN_FOCUS_RATIO = 0.8;
+
 export type PromptSelectionInput = {
   wordBank: WordBankEntry[];
   weakPatterns: string[];
@@ -120,7 +122,7 @@ export function selectNextWords(
   });
 
   const preferredPool = Array.from(scoredWords.values());
-  const focusRatio = weakPatterns.length > 0 ? 0.8 : 0;
+  const focusRatio = weakPatterns.length > 0 ? WEAK_PATTERN_FOCUS_RATIO : 0;
   const focusTargetCount = Math.min(
     count,
     preferredPool.length,

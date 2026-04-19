@@ -4,24 +4,31 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { PracticeTab } from "../components/PracticeTab";
 import { ProfileTab } from "../components/ProfileTab";
 
-import { wordBank } from "../data/wordBank";
+import {
+  wordBank as defaultWordBank,
+  createWordBankEntries,
+  parseWordBankText,
+} from "../data/wordBank";
 import { useActiveTab } from "../hooks/useActiveTab";
 import { useRoundHistory } from "../hooks/useRoundHistory";
 import { useSessionErrors } from "../hooks/useSessionErrors";
+import { useSessionSummary } from "../hooks/useSessionSummary";
+import { useWordBank } from "../hooks/useWordBank";
+import { getActiveWeakPatterns } from "../lib/errorAnalytics";
 import {
   RECENT_WORD_LIMIT,
   ROUND_WORD_COUNT,
 } from "../lib/sessionConfig";
-import { getWeakPatterns, selectNextWords } from "../lib/promptSelection";
+import { selectNextWords } from "../lib/promptSelection";
 import { analyzeTypingAttempt } from "../lib/typingMetrics";
 
-const INITIAL_ROUND_WORDS = wordBank.slice(0, ROUND_WORD_COUNT).map((entry) => entry.word);
+const INITIAL_ROUND_WORDS = defaultWordBank.slice(0, ROUND_WORD_COUNT).map((entry) => entry.word);
 const ERROR_RETENTION_ROUNDS = 5;
 
-function getRandomStarterWords(count: number): string[] {
+function getRandomStarterWords(wordBankEntries: typeof defaultWordBank, count: number): string[] {
   return selectNextWords(
     {
-      wordBank,
+      wordBank: wordBankEntries,
       weakPatterns: [],
       recentWords: [],
       fallbackWords: INITIAL_ROUND_WORDS,
@@ -85,18 +92,11 @@ function updateSessionErrorMemory({
   return { counts: nextCounts, lastSeen: nextLastSeen };
 }
 
-function getTopErrorKey(errorCounts: Record<string, number>): string | null {
-  const [topEntry] = Object.entries(errorCounts).sort(
-    (firstEntry, secondEntry) => secondEntry[1] - firstEntry[1],
-  );
-
-  return topEntry?.[0] ?? null;
-}
-
 export default function Home() {
   const startTimeRef = useRef(Date.now());
   const hasInitializedStarterWordsRef = useRef(false);
   const { activeTab, setActiveTab } = useActiveTab("practice");
+  const { wordBankEntries, setWordBankEntries } = useWordBank();
   const [currentRoundWords, setCurrentRoundWords] = useState<string[]>(() => {
     if (INITIAL_ROUND_WORDS.length > 0) {
       return INITIAL_ROUND_WORDS;
@@ -106,9 +106,6 @@ export default function Home() {
   });
   const [typedText, setTypedText] = useState("");
   const [recentWords, setRecentWords] = useState<string[]>([]);
-  const [roundCount, setRoundCount] = useState(0);
-  const [totalAccuracy, setTotalAccuracy] = useState(0);
-  const [totalWpm, setTotalWpm] = useState(0);
   const [roundWrongKeyCount, setRoundWrongKeyCount] = useState(0);
   const [roundErroredIndices, setRoundErroredIndices] = useState<number[]>([]);
   const [roundLetterErrors, setRoundLetterErrors] = useState<Record<string, number>>({});
@@ -125,10 +122,26 @@ export default function Home() {
     resetSessionErrors,
   } = useSessionErrors();
   const { roundHistory, setRoundHistory } = useRoundHistory();
+  const {
+    roundCount,
+    setRoundCount,
+    totalAccuracy,
+    setTotalAccuracy,
+    totalWpm,
+    setTotalWpm,
+    resetSessionSummary,
+  } = useSessionSummary();
+  const [wordBankDraftText, setWordBankDraftText] = useState(() =>
+    defaultWordBank.map((entry) => entry.word).join(", "),
+  );
 
   const targetText = useMemo(() => {
     return currentRoundWords.join(" ");
   }, [currentRoundWords]);
+
+  useEffect(() => {
+    setWordBankDraftText(wordBankEntries.map((entry) => entry.word).join(", "));
+  }, [wordBankEntries]);
 
   const recordBlockedError = (index: number) => {
     const expectedCharacter = targetText[index];
@@ -194,16 +207,16 @@ export default function Home() {
     });
     const updatedSessionPatternErrors = updatedPatternMemory.counts;
     const updatedSessionLetterErrors = updatedLetterMemory.counts;
-    const weakPatterns = Array.from(
-      new Set([
-        getTopErrorKey(updatedSessionLetterErrors),
-        ...getWeakPatterns(updatedSessionPatternErrors, 2, 4),
-      ].filter((pattern): pattern is string => Boolean(pattern))),
+    const weakPatterns = getActiveWeakPatterns(
+      updatedSessionLetterErrors,
+      updatedSessionPatternErrors,
+      2,
+      4,
     );
     const nextRecentWords = [...recentWords, ...currentRoundWords].slice(-RECENT_WORD_LIMIT);
     const nextRound = selectNextWords(
       {
-        wordBank,
+        wordBank: wordBankEntries,
         weakPatterns,
         recentWords: nextRecentWords,
         fallbackWords: currentRoundWords,
@@ -244,12 +257,7 @@ export default function Home() {
   const averageAccuracy = roundCount > 0 ? totalAccuracy / roundCount : null;
   const averageWpm = roundCount > 0 ? totalWpm / roundCount : null;
   const activeWeakPatterns = useMemo(() => {
-    return Array.from(
-      new Set([
-        getTopErrorKey(sessionLetterErrors),
-        ...getWeakPatterns(sessionPatternErrors, 2, 4),
-      ].filter((pattern): pattern is string => Boolean(pattern))),
-    );
+    return getActiveWeakPatterns(sessionLetterErrors, sessionPatternErrors, 2, 4);
   }, [sessionLetterErrors, sessionPatternErrors]);
 
   useEffect(() => {
@@ -259,7 +267,7 @@ export default function Home() {
 
     hasInitializedStarterWordsRef.current = true;
 
-    const randomStarterWords = getRandomStarterWords(ROUND_WORD_COUNT);
+    const randomStarterWords = getRandomStarterWords(wordBankEntries, ROUND_WORD_COUNT);
     if (randomStarterWords.length === 0) {
       return;
     }
@@ -294,19 +302,29 @@ export default function Home() {
     }
   };
 
+  const handleApplyWordBank = () => {
+    const nextWords = parseWordBankText(wordBankDraftText);
+    const nextEntries = createWordBankEntries(nextWords);
+
+    if (nextEntries.length === 0) {
+      return;
+    }
+
+    setWordBankEntries(nextEntries);
+    setWordBankDraftText(nextEntries.map((entry) => entry.word).join(", "));
+  };
+
   const handleResetSession = () => {
-    setRoundCount(0);
-    setTotalAccuracy(0);
-    setTotalWpm(0);
     setRoundWrongKeyCount(0);
     setRoundErroredIndices([]);
     setRoundLetterErrors({});
     setRoundPatternErrors({});
     resetSessionErrors();
+    resetSessionSummary();
     setRecentWords([]);
     setRoundHistory([]);
     setTypedText("");
-    setCurrentRoundWords(getRandomStarterWords(ROUND_WORD_COUNT));
+    setCurrentRoundWords(getRandomStarterWords(wordBankEntries, ROUND_WORD_COUNT));
     startTimeRef.current = Date.now();
   };
 
@@ -371,6 +389,9 @@ export default function Home() {
               sessionLetterErrors={sessionLetterErrors}
               sessionPatternErrors={sessionPatternErrors}
               onResetSession={handleResetSession}
+              wordBankText={wordBankDraftText}
+              onWordBankTextChange={setWordBankDraftText}
+              onApplyWordBank={handleApplyWordBank}
             />
           )}
         </div>

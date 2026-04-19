@@ -1,7 +1,6 @@
-import { useEffect, useState } from "react";
-
 import { ROUND_HISTORY_STORAGE_KEY } from "../lib/sessionConfig";
 import type { RoundHistoryEntry } from "../types/typing";
+import { usePersistedState } from "./usePersistedState";
 
 function parseStoredRoundHistory(storedValue: string | null): RoundHistoryEntry[] {
   if (!storedValue) {
@@ -21,17 +20,11 @@ function parseStoredRoundHistory(storedValue: string | null): RoundHistoryEntry[
 }
 
 export function useRoundHistory() {
-  const [roundHistory, setRoundHistory] = useState<RoundHistoryEntry[]>(() => {
-    if (typeof window === "undefined") {
-      return [];
-    }
-
-    return parseStoredRoundHistory(window.localStorage.getItem(ROUND_HISTORY_STORAGE_KEY));
+  const { state: roundHistory, setState: setRoundHistory } = usePersistedState<RoundHistoryEntry[]>({
+    storageKey: ROUND_HISTORY_STORAGE_KEY,
+    initialState: [],
+    parse: parseStoredRoundHistory,
   });
-
-  useEffect(() => {
-    window.localStorage.setItem(ROUND_HISTORY_STORAGE_KEY, JSON.stringify(roundHistory));
-  }, [roundHistory]);
 
   return { roundHistory, setRoundHistory };
 }
